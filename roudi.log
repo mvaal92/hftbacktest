@@ -1,0 +1,5 @@
+[0;90m2024-11-04 22:42:10.488 [0;1;92m[Info ][m: No config file provided and also not found at '/etc/iceoryx/roudi_config.toml'. Falling back to built-in config.
+[0;90m2024-11-04 22:42:10.490 [0;1;97;41m[Fatal][m: Could not acquire lock, is RouDi still running?
+[0;90m2024-11-04 22:42:10.490 [0;1;97;41m[Fatal][m: /Users/magnusvaalillehaug/dev/iceoryx/build/iceoryx/iceoryx_posh/source/roudi/memory/iceoryx_roudi_memory_manager.cpp:35 [Fatal Error] [ICEORYX_ROUDI_MEMORY_MANAGER__ROUDI_STILL_RUNNING (code = 121)] in module [iceoryx_posh (id = 2)]
+[0;90m2024-11-04 22:42:10.490 [0;1;97;41m[Fatal][m: /Users/magnusvaalillehaug/dev/iceoryx/build/iceoryx/iceoryx_posh/source/roudi/memory/iceoryx_roudi_memory_manager.cpp:35 [PANIC]
+cargo run --release feed_monitor -- -f orderbook1,trades

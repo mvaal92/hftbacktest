@@ -18,8 +18,8 @@ const ORDER_PREFIX: &str = "prefix";
 fn prepare_live() -> LiveBot<IceoryxUnifiedChannel, HashMapMarketDepth> {
     let mut hbt = LiveBotBuilder::new()
         .register(Instrument::new(
-            "bybit-futures",
-            "BTCUSDT",
+            "bybit",
+            "ETHUSDT",
             0.1,
             0.001,
             HashMapMarketDepth::new(0.000001, 1.0),
@@ -46,7 +46,6 @@ fn prepare_live() -> LiveBot<IceoryxUnifiedChannel, HashMapMarketDepth> {
         .build()
         .unwrap();
 
-    hbt.run().unwrap();
     hbt
 }
 
@@ -58,10 +57,12 @@ fn main() {
     let relative_half_spread = 0.0001;
     let relative_grid_interval = 0.0001;
     let grid_num = 2;
-    let min_grid_step = 0.1; // tick size
+    let min_grid_step = 0.1;
     let skew = relative_half_spread / grid_num as f64;
-    let order_qty = 0.001;
+    let order_qty = 0.01;
     let max_position = grid_num as f64 * order_qty;
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     let mut recorder = LoggingRecorder::new();
     gridtrading(

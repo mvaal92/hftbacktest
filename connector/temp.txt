@@ -1,0 +1,15 @@
+                msg = self.symbol_rx.recv() => match msg {
+                    Ok(symbol) => {
+                        info!("Subscribing to new symbol: {}", symbol);
+                        let args = vec![
+                            format!("orderbook.1.{symbol}"),
+                            format!("orderbook.50.{symbol}"),
+                            format!("orderbook.500.{symbol}"),
+                            format!("publicTrade.{symbol}")
+                        ];
+                        info!("Subscription topics: {:?}", args);
+                        let op = Op {
+                            req_id: "subscribe".to_string(),
+                            op: "subscribe".to_string(),
+                            args,
+                        };

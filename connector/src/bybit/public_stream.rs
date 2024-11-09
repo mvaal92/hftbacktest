@@ -25,7 +25,7 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, Message},
 };
-use tracing::{debug, error};
+use tracing::{error, info};
 
 use crate::{
     bybit::{
@@ -51,11 +51,19 @@ impl PublicStream {
         let stream = serde_json::from_str::<PublicStreamMsg>(text)?;
         match stream {
             PublicStreamMsg::Op(resp) => {
-                debug!(?resp, "Op");
+                if let Some(true) = resp.success {
+                    if !resp.success_topics.is_empty() {
+                        info!("Successfully subscribed to topics: {:?}", resp.success_topics);
+                    }
+                }
+                if !resp.fail_topics.is_empty() {
+                    error!("Failed to subscribe to topics: {:?}", resp.fail_topics);
+                    return Err(BybitError::ConnectionInterrupted);
+                }
             }
-            PublicStreamMsg::Topic(stream) => {
-                if stream.topic.starts_with("orderbook.1") {
-                    let data: OrderBook = serde_json::from_value(stream.data)?;
+            PublicStreamMsg::Topic(topic_msg) => {
+                if topic_msg.topic.starts_with("orderbook.1") {
+                    let data: OrderBook = serde_json::from_value(topic_msg.data)?;
                     let (bids, asks) = parse_depth(data.bids, data.asks)?;
 
                     for (px, qty) in bids {
@@ -64,7 +72,7 @@ impl PublicStream {
                                 symbol: data.symbol.clone(),
                                 event: Event {
                                     ev: LOCAL_BID_DEPTH_BBO_EVENT,
-                                    exch_ts: stream.cts.unwrap() * 1_000_000,
+                                    exch_ts: topic_msg.cts.unwrap() * 1_000_000,
                                     local_ts: Utc::now().timestamp_nanos_opt().unwrap(),
                                     order_id: 0,
                                     px,
@@ -82,7 +90,7 @@ impl PublicStream {
                                 symbol: data.symbol.clone(),
                                 event: Event {
                                     ev: LOCAL_ASK_DEPTH_BBO_EVENT,
-                                    exch_ts: stream.cts.unwrap() * 1_000_000,
+                                    exch_ts: topic_msg.cts.unwrap() * 1_000_000,
                                     local_ts: Utc::now().timestamp_nanos_opt().unwrap(),
                                     order_id: 0,
                                     px,
@@ -93,8 +101,8 @@ impl PublicStream {
                             }))
                             .unwrap();
                     }
-                } else if stream.topic.starts_with("orderbook") {
-                    let data: OrderBook = serde_json::from_value(stream.data)?;
+                } else if topic_msg.topic.starts_with("orderbook") {
+                    let data: OrderBook = serde_json::from_value(topic_msg.data)?;
                     let (bids, asks) = parse_depth(data.bids, data.asks)?;
 
                     for (px, qty) in bids {
@@ -103,7 +111,7 @@ impl PublicStream {
                                 symbol: data.symbol.clone(),
                                 event: Event {
                                     ev: LOCAL_BID_DEPTH_EVENT,
-                                    exch_ts: stream.cts.unwrap() * 1_000_000,
+                                    exch_ts: topic_msg.cts.unwrap() * 1_000_000,
                                     local_ts: Utc::now().timestamp_nanos_opt().unwrap(),
                                     order_id: 0,
                                     px,
@@ -121,7 +129,7 @@ impl PublicStream {
                                 symbol: data.symbol.clone(),
                                 event: Event {
                                     ev: LOCAL_ASK_DEPTH_EVENT,
-                                    exch_ts: stream.cts.unwrap() * 1_000_000,
+                                    exch_ts: topic_msg.cts.unwrap() * 1_000_000,
                                     local_ts: Utc::now().timestamp_nanos_opt().unwrap(),
                                     order_id: 0,
                                     px,
@@ -132,8 +140,8 @@ impl PublicStream {
                             }))
                             .unwrap();
                     }
-                } else if stream.topic.starts_with("publicTrade") {
-                    let data: Vec<msg::Trade> = serde_json::from_value(stream.data)?;
+                } else if topic_msg.topic.starts_with("publicTrade") {
+                    let data: Vec<msg::Trade> = serde_json::from_value(topic_msg.data)?;
                     for item in data {
                         self.ev_tx
                             .send(PublishEvent::LiveEvent(LiveEvent::Feed {
@@ -164,6 +172,7 @@ impl PublicStream {
     }
 
     pub async fn connect(&mut self, url: &str) -> Result<(), BybitError> {
+        info!("Connecting to public stream at {}", url);
         let mut request = url.into_client_request()?;
         let _ = request.headers_mut();
 
@@ -174,65 +183,82 @@ impl PublicStream {
         loop {
             select! {
                 _ = interval.tick() => {
+                    info!("Sending ping message");
                     let op = Op {
                         req_id: "ping".to_string(),
                         op: "ping".to_string(),
                         args: vec![]
                     };
                     let s = serde_json::to_string(&op).unwrap();
-                    write.send(Message::Text(s)).await?;
+                    if let Err(e) = write.send(Message::Text(s)).await {
+                        error!("Failed to send ping: {:?}", e);
+                        return Err(BybitError::ConnectionInterrupted);
+                    }
                 }
-                msg = self.symbol_rx.recv() => match msg {
-                    Ok(symbol) => {
-                        // Subscribes to the orderbook.1, orderbook.50 and orderbook.500 topics to
-                        // obtain a wider range of depth and the most frequent updates.
-                        // The different updates are handled by data fusion.
-                        // Please see: `<https://bybit-exchange.github.io/docs/v5/websocket/public/orderbook>`
-                        let args = vec![
-                            format!("orderbook.1.{symbol}"),
-                            format!("orderbook.50.{symbol}"),
-                            format!("orderbook.500.{symbol}"),
-                            format!("publicTrade.{symbol}")
-                        ];
-                        let op = Op {
-                            req_id: "subscribe".to_string(),
-                            op: "subscribe".to_string(),
-                            args,
-                        };
-                        let s = serde_json::to_string(&op).unwrap();
-                        write.send(Message::Text(s)).await?;
-                    }
-                    Err(RecvError::Closed) => {
-                        return Ok(());
-                    }
-                    Err(RecvError::Lagged(num)) => {
-                        error!("{num} subscription requests were missed.");
+                msg = self.symbol_rx.recv() => {
+                    info!("Received symbol subscription request");
+                    match msg {
+                        Ok(symbol) => {
+                            info!("Processing subscription for symbol: {}", symbol);
+                            let args = vec![
+                                format!("orderbook.1.{symbol}"),
+                                format!("orderbook.50.{symbol}"),
+                                format!("orderbook.500.{symbol}"),
+                                format!("publicTrade.{symbol}")
+                            ];
+                            info!("Generated subscription topics: {:?}", args);
+                            let op = Op {
+                                req_id: "subscribe".to_string(),
+                                op: "subscribe".to_string(),
+                                args,
+                            };
+                            let s = serde_json::to_string(&op).unwrap();
+                            if let Err(e) = write.send(Message::Text(s)).await {
+                                error!("Failed to send subscription: {:?}", e);
+                                return Err(BybitError::ConnectionInterrupted);
+                            }
+                        }
+                        Err(RecvError::Closed) => {
+                            info!("Symbol receiver closed, exiting");
+                            return Ok(());
+                        }
+                        Err(RecvError::Lagged(num)) => {
+                            error!("Symbol receiver lagged by {} messages", num);
+                        }
                     }
                 },
                 message = read.next() => {
                     match message {
                         Some(Ok(Message::Text(text))) => {
                             if let Err(error) = self.handle_public_stream(&text).await {
-                                error!(?error, %text, "Couldn't handle PublicStreamMsg.");
+                                error!(?error, text, "Failed to handle public stream message");
                             }
                         }
+                        Some(Ok(Message::Binary(data))) => {
+                        }
                         Some(Ok(Message::Ping(_))) => {
-                            write.send(Message::Pong(Vec::new())).await?;
+                            info!("Received WebSocket ping");
+                            if let Err(e) = write.send(Message::Pong(vec![])).await {
+                                error!("Failed to send pong: {:?}", e);
+                                return Err(BybitError::ConnectionInterrupted);
+                            }
                         }
-                        Some(Ok(Message::Close(close_frame))) => {
-                            return Err(BybitError::ConnectionAbort(
-                                close_frame
-                                    .map(|f| f.to_string())
-                                    .unwrap_or(String::new())
-                            ));
+                        Some(Ok(Message::Pong(_))) => {
+                            info!("Received WebSocket pong");
                         }
-                        Some(Ok(Message::Binary(_)))
-                        | Some(Ok(Message::Frame(_)))
-                        | Some(Ok(Message::Pong(_))) => {}
-                        Some(Err(error)) => {
-                            return Err(BybitError::from(error));
+                        Some(Ok(Message::Close(_))) => {
+                            error!("Received close frame");
+                            return Err(BybitError::ConnectionInterrupted);
+                        }
+                        Some(Ok(Message::Frame(_))) => {
+                            info!("Received raw WebSocket frame");
+                        }
+                        Some(Err(e)) => {
+                            error!("WebSocket error: {:?}", e);
+                            return Err(BybitError::ConnectionInterrupted);
                         }
                         None => {
+                            error!("WebSocket stream ended");
                             return Err(BybitError::ConnectionInterrupted);
                         }
                     }

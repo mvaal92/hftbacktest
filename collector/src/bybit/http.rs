@@ -29,7 +29,7 @@ pub async fn connect(
 
     write
         .send(Message::Text(format!(
-            r#"{{"req_id": "subscribe", "op": "subscribe", "args": [{}]}}"#,
+            r#"{{"op": "subscribe", "args": [{}]}}"#,
             topics
                 .iter()
                 .map(|s| format!("\"{s}\""))

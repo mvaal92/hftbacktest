@@ -2,13 +2,14 @@ use std::{
     collections::{HashMap, HashSet},
     num::{ParseFloatError, ParseIntError},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use hftbacktest::types::{ErrorKind, LiveError, LiveEvent, Order, Value};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::{broadcast, broadcast::Sender, mpsc::UnboundedSender};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     bybit::{
@@ -101,7 +102,7 @@ impl BybitError {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Config {
     public_url: String,
     private_url: String,
@@ -111,6 +112,7 @@ pub struct Config {
     secret: String,
     category: String,
     order_prefix: String,
+    symbols: Option<Vec<String>>,
 }
 
 type SharedSymbolSet = Arc<Mutex<HashSet<String>>>;
@@ -126,42 +128,70 @@ pub struct Bybit {
 
 impl Bybit {
     fn connect_public_stream(&self, ev_tx: UnboundedSender<PublishEvent>) {
-        // Connects to the public stream for the market data.
         let public_url = self.config.public_url.clone();
         let symbol_tx = self.symbol_tx.clone();
+        let symbols: Vec<String> = self.symbols.lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect();
+        
+        info!("Initializing public stream connection to {} with symbols {:?}", public_url, symbols);
 
         tokio::spawn(async move {
-            let _ = Retry::new(ExponentialBackoff::default())
-                .error_handler(|error: BybitError| {
-                    error!(?error, "An error occurred in the public stream connection.");
-                    ev_tx
-                        .send(PublishEvent::LiveEvent(LiveEvent::Error(LiveError::with(
+            let mut retry_count = 0;
+            const MAX_RETRIES: u32 = 3;
+
+            while retry_count < MAX_RETRIES {
+                let result: Result<(), BybitError> = Retry::new(ExponentialBackoff::default())
+                    .error_handler(|error: BybitError| {
+                        error!(?error, "An error occurred in the public stream connection.");
+                        if let Err(send_err) = ev_tx.send(PublishEvent::LiveEvent(LiveEvent::Error(LiveError::with(
                             ErrorKind::ConnectionInterrupted,
                             error.to_value(),
-                        ))))
-                        .unwrap();
-                    Ok(())
-                })
-                .retry(|| async {
-                    let mut stream = PublicStream::new(ev_tx.clone(), symbol_tx.subscribe());
-                    if let Err(error) = stream.connect(&public_url).await {
-                        error!(?error, "A connection error occurred.");
-                        ev_tx
-                            .send(PublishEvent::LiveEvent(LiveEvent::Error(LiveError::with(
-                                ErrorKind::ConnectionInterrupted,
-                                error.to_value(),
-                            ))))
-                            .unwrap();
-                    } else {
-                        ev_tx
-                            .send(PublishEvent::LiveEvent(LiveEvent::Error(LiveError::new(
-                                ErrorKind::ConnectionInterrupted,
-                            ))))
-                            .unwrap();
+                        )))) {
+                            error!(?send_err, "Failed to send error event");
+                        }
+                        Ok(())
+                    })
+                    .retry(|| async {
+                        info!("Attempting to establish public stream connection (attempt {}/{})", retry_count + 1, MAX_RETRIES);
+                        let mut stream = PublicStream::new(ev_tx.clone(), symbol_tx.subscribe());
+                        
+                        match stream.connect(&public_url).await {
+                            Ok(_) => {
+                                info!("Public stream connection established");
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                
+                                for symbol in &symbols {
+                                    info!("Sending initial subscription for symbol: {}", symbol);
+                                    if let Err(e) = symbol_tx.send(symbol.clone()) {
+                                        error!("Failed to subscribe to symbol {}: {:?}", symbol, e);
+                                        return Err(BybitError::ConnectionInterrupted);
+                                    }
+                                }
+                                
+                                loop {
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                                }
+                            }
+                            Err(error) => {
+                                error!(?error, "Failed to connect to public stream");
+                                Err(error)
+                            }
+                        }
+                    })
+                    .await;
+
+                if result.is_err() {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        error!("Maximum retries ({}) exceeded for public stream connection", MAX_RETRIES);
+                        std::process::exit(1);
                     }
-                    Err::<(), BybitError>(BybitError::ConnectionInterrupted)
-                })
-                .await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                }
+            }
         });
     }
 
@@ -260,44 +290,79 @@ impl ConnectorBuilder for Bybit {
 
     fn build_from(config: &str) -> Result<Self, Self::Error> {
         let config: Config = toml::from_str(config)?;
-        if config.order_prefix.contains("/") {
-            panic!("order prefix cannot include '/'.");
+        info!("Building Bybit connector with config: {:?}", config);
+        
+        let channel_capacity = 100;
+        info!("Creating symbol channel with capacity: {}", channel_capacity);
+        let (symbol_tx, _) = broadcast::channel(channel_capacity);
+        
+        // Store initial symbols but don't send yet
+        let symbols = Arc::new(Mutex::new(HashSet::new()));
+        if let Some(ref initial_symbols) = config.symbols {
+            info!("Storing initial symbols: {:?}", initial_symbols);
+            symbols.lock().unwrap().extend(initial_symbols.iter().cloned());
         }
-        if config.order_prefix.len() > 8 {
-            panic!("order prefix length should be not greater than 8.");
-        }
-        let (order_tx, _) = broadcast::channel(500);
-        let (symbol_tx, _) = broadcast::channel(500);
+
+        let order_tx = broadcast::channel(500).0;
         let order_manager = Arc::new(Mutex::new(OrderManager::new(&config.order_prefix)));
         let client = BybitClient::new(&config.rest_url, &config.api_key, &config.secret);
+        
         Ok(Bybit {
             config,
             order_tx,
             order_manager,
             client,
-            symbols: Default::default(),
+            symbols,
             symbol_tx,
         })
     }
 }
 
 impl Connector for Bybit {
+    fn run(&mut self, ev_tx: UnboundedSender<PublishEvent>) {
+        info!("Starting Bybit connector");
+        
+        // Clone what we need before spawning
+        let symbols = self.symbols.lock().unwrap().clone();
+        let symbol_tx = self.symbol_tx.clone();
+        
+        // First set up the streams
+        self.connect_public_stream(ev_tx.clone());
+        self.connect_private_stream(ev_tx.clone());
+        self.connect_trade_stream(ev_tx.clone());
+        
+        // Spawn task with cloned values
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            
+            info!("Sending initial symbols: {:?}", symbols);
+            for symbol in symbols {
+                if let Err(e) = symbol_tx.send(symbol.clone()) {
+                    error!("Failed to send initial symbol {}: {:?}", symbol, e);
+                } else {
+                    info!("Successfully sent initial symbol: {}", symbol);
+                }
+            }
+        });
+    }
+
     fn register(&mut self, symbol: String) {
+        info!("Registering new symbol: {}", symbol);
         let mut symbols = self.symbols.lock().unwrap();
         if !symbols.contains(&symbol) {
+            info!("Adding new symbol to set: {}", symbol);
             symbols.insert(symbol.clone());
-            self.symbol_tx.send(symbol).unwrap();
+            info!("Sending symbol to subscription channel: {}", symbol);
+            if let Err(e) = self.symbol_tx.send(symbol.clone()) {
+                error!("Failed to send symbol to subscription channel: {:?}", e);
+            }
+        } else {
+            info!("Symbol already registered: {}", symbol);
         }
     }
 
     fn order_manager(&self) -> Arc<Mutex<dyn GetOrders + Send + 'static>> {
         self.order_manager.clone()
-    }
-
-    fn run(&mut self, ev_tx: UnboundedSender<PublishEvent>) {
-        self.connect_public_stream(ev_tx.clone());
-        self.connect_private_stream(ev_tx.clone());
-        self.connect_trade_stream(ev_tx);
     }
 
     fn submit(&self, asset: String, order: Order, ev_tx: UnboundedSender<PublishEvent>) {
@@ -351,3 +416,4 @@ impl Connector for Bybit {
         }
     }
 }
+

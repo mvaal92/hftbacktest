@@ -1,0 +1,15 @@
+[package]
+name = "hft-test"  # Keep this name
+version = "0.1.0"
+edition = "2021"
+default-run = "hft-test" 
+
+[dependencies]
+hftbacktest = { path = "../hftbacktest" }  # Changed to local path
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1.0", features = ["full"] }
+tokio-tungstenite = { version = "0.20", features = ["native-tls-vendored"] }
+futures-util = "0.3"
+url = "2.4"
+iceoryx2 = { version = "0.4.1", features = ["logger_tracing"] }

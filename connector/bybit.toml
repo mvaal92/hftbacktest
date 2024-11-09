@@ -1,0 +1,21 @@
+# WebSocket endpoints
+public_url = "wss://stream.bybit.com/v5/public/linear"
+private_url = "wss://stream-testnet.bybit.com/v5/private"
+trade_url = "wss://stream-testnet.bybit.com/v5/trade"
+rest_url = "https://api-testnet.bybit.com"
+
+# Market configuration
+category = "linear"
+order_prefix = ""
+
+# Authentication
+api_key = "5ATa7AYRUJoWQ98yXp"
+secret = "jXNh33bb5riA7c17sXP71ZjLFbMHQP7OR3qK"
+
+symbols = ["ETHUSDT"]  # Add this section
+
+
+# Debug settings
+debug = true
+log_messages = true
+log_level = "trace"

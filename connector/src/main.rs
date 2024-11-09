@@ -24,7 +24,7 @@ use tokio::{
     runtime::Builder,
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
 };
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
     binancefutures::BinanceFutures,
@@ -110,9 +110,11 @@ async fn run_publish_task(
     order_manager: Arc<Mutex<dyn GetOrders>>,
     mut rx: UnboundedReceiver<PublishEvent>,
 ) -> Result<(), ChannelError> {
+    info!("Starting publish task with name: {}", name);
+    let bot_tx = IceoryxBuilder::new(name).bot(false).sender()?;
+    info!("Created IceOryx sender for IPC channel: {}", name);
     let mut depth = HashMap::new();
     let mut position: HashMap<String, Position> = HashMap::new();
-    let bot_tx = IceoryxBuilder::new(name).bot(false).sender()?;
 
     while let Some(msg) = rx.recv().await {
         match msg {

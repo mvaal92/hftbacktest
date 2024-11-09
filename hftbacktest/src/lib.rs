@@ -48,3 +48,6 @@ pub mod prelude;
 
 /// Provides utilities.
 mod utils;
+
+/// Provides GridAlgo examples.
+pub mod algo;

@@ -1,0 +1,22 @@
+sudo ./target/release/connector by bybit connector/bybit.toml
+
+cd my_hft_test
+cargo run --release
+
+# From the project root
+cd my_hft_test
+cargo build --release
+./target/release/my_hft_test
+
+
+./target/release/connector bybit bybit "/Users/magnusvaalillehaug/Documents/GitHub/hftbacktest/connector/bybit.toml"
+RUST_LOG=trace  sudo ./target/release/connector binancefutures binancefutures "/Users/magnusvaalillehaug/Documents/GitHub/hftbacktest/connector/binancefutures.toml"
+
+pkill iox-roudi
+iox-roudi &
+cargo watch -x run
+ cargo watch -x run --bin man_live
+
+./restart_iceoryx.sh
+
+cargo run --example gridtrading_live_bybit --release
