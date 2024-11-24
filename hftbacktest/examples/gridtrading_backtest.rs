@@ -21,16 +21,16 @@ use hftbacktest::{
 mod algo;
 
 fn prepare_backtest() -> Backtest<HashMapMarketDepth> {
-    let latency_data = (20240501..20240532)
-        .map(|date| DataSource::File(format!("latency_{date}.npz")))
+    let latency_data = (20240731..20240731)
+        .map(|date| DataSource::File(format!("latency/feed_latency_{date}.npz")))
         .collect();
 
     let latency_model = IntpOrderLatency::new(latency_data, 0);
     let asset_type = LinearAsset::new(1.0);
     let queue_model = ProbQueueModel::new(PowerProbQueueFunc3::new(3.0));
 
-    let data = (20240501..20240532)
-        .map(|date| DataSource::File(format!("1000SHIBUSDT_{date}.npz")))
+    let data = (20240731..20240731)
+        .map(|date| DataSource::File(format!("D:/gptcv/hftbacktest/Data/1000bonkusdt/1000bonkusdt_{date}.npz")))
         .collect();
 
     let hbt = Backtest::builder()
@@ -45,7 +45,7 @@ fn prepare_backtest() -> Backtest<HashMapMarketDepth> {
                 .depth(|| {
                     let mut depth = HashMapMarketDepth::new(0.000001, 1.0);
                     depth.apply_snapshot(
-                        &read_npz_file("1000SHIBUSDT_20240501_SOD.npz", "data").unwrap(),
+                        &read_npz_file("D:/gptcv/hftbacktest/Data/1000bonkusdt/1000bonkusdt_20240730_eod.npz", "data").unwrap(),
                     );
                     depth
                 })
