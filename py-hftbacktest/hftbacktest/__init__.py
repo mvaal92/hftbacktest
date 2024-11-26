@@ -7,19 +7,14 @@ from ._hftbacktest import (
     BacktestAsset as BacktestAsset_,
     build_hashmap_backtest,
     build_roivec_backtest,
-    LiveInstrument,
-    build_hashmap_livebot,
-    build_roivec_livebot
+    LiveInstrument
 )
 from .binding import (
     HashMapMarketDepthBacktest_,
     HashMapMarketDepthBacktest as HashMapMarketDepthBacktest_TypeHint,
     ROIVectorMarketDepthBacktest_,
     ROIVectorMarketDepthBacktest as ROIVectorMarketDepthBacktest_TypeHint,
-    HashMapMarketDepthLiveBot_,
-    HashMapMarketDepthLiveBot as HashMapMarketDepthLiveBot_TypeHint,
-    ROIVectorMarketDepthLiveBot_,
-    ROIVectorMarketDepthLiveBot as ROIVectorMarketDepthLiveBot_TypeHint,
+
     event_dtype
 )
 from .order import (
@@ -53,6 +48,20 @@ from .types import (
     BUY_EVENT,
     SELL_EVENT
 )
+try:
+    from ._hftbacktest import (
+        build_hashmap_livebot,
+        build_roivec_livebot
+    )
+    from .binding import (
+        HashMapMarketDepthLiveBot_,
+        HashMapMarketDepthLiveBot as HashMapMarketDepthLiveBot_TypeHint,
+        ROIVectorMarketDepthLiveBot_,
+        ROIVectorMarketDepthLiveBot as ROIVectorMarketDepthLiveBot_TypeHint,
+    )
+    LIVE_FEATURE = True
+except:
+    LIVE_FEATURE = False
 
 __all__ = (
     'BacktestAsset',
@@ -103,7 +112,7 @@ __all__ = (
     'Recorder'
 )
 
-__version__ = '2.1.0'
+__version__ = '2.1.1'
 
 
 class BacktestAsset(BacktestAsset_):
@@ -209,17 +218,18 @@ def ROIVectorMarketDepthBacktest(
     return ROIVectorMarketDepthBacktest_(ptr)
 
 
-def ROIVectorMarketDepthLiveBot(
-        assets: List[LiveInstrument]
-) -> ROIVectorMarketDepthLiveBot_TypeHint:
-    """
-    Constructs an instance of `ROIVectorMarketDepthLiveBot`.
+if LIVE_FEATURE:
+    def ROIVectorMarketDepthLiveBot(
+            assets: List[LiveInstrument]
+    ) -> ROIVectorMarketDepthLiveBot_TypeHint:
+        """
+        Constructs an instance of `ROIVectorMarketDepthLiveBot`.
 
-    Args:
-        assets: A list of live instruments constructed using :class:`LiveInstrument`.
+        Args:
+            assets: A list of live instruments constructed using :class:`LiveInstrument`.
 
-    Returns:
-        A jit`ed `ROIVectorMarketDepthLiveBot` that can be used in an ``njit`` function.
-    """
-    ptr = build_roivec_livebot(assets)
-    return ROIVectorMarketDepthLiveBot_(ptr)
+        Returns:
+            A jit`ed `ROIVectorMarketDepthLiveBot` that can be used in an ``njit`` function.
+        """
+        ptr = build_roivec_livebot(assets)
+        return ROIVectorMarketDepthLiveBot_(ptr)

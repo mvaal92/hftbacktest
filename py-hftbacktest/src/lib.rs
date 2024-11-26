@@ -2,6 +2,8 @@ use std::{ffi::c_void, mem::size_of, ptr::slice_from_raw_parts_mut};
 
 pub use backtest::*;
 pub use depth::*;
+#[cfg(feature = "live")]
+use hftbacktest::live::{Instrument, LiveBotBuilder};
 use hftbacktest::{
     backtest::{
         assettype::{InverseAsset, LinearAsset},
@@ -38,17 +40,18 @@ use hftbacktest::{
         Backtest,
         DataSource,
     },
-    live::{Instrument, LiveBotBuilder},
     prelude::{ApplySnapshot, Event, HashMapMarketDepth, ROIVectorMarketDepth},
 };
 use hftbacktest_derive::build_asset;
 pub use order::*;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
+#[cfg(feature = "live")]
 use crate::live::{HashMapMarketDepthLiveBot, ROIVectorMarketDepthLiveBot};
 
 mod backtest;
 mod depth;
+#[cfg(feature = "live")]
 mod live;
 mod order;
 
@@ -114,6 +117,7 @@ pub struct BacktestAsset {
 }
 
 unsafe impl Send for BacktestAsset {}
+unsafe impl Sync for BacktestAsset {}
 
 #[pymethods]
 impl BacktestAsset {
@@ -453,7 +457,9 @@ impl BacktestAsset {
 fn _hftbacktest(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_hashmap_backtest, m)?)?;
     m.add_function(wrap_pyfunction!(build_roivec_backtest, m)?)?;
+    #[cfg(feature = "live")]
     m.add_function(wrap_pyfunction!(build_hashmap_livebot, m)?)?;
+    #[cfg(feature = "live")]
     m.add_function(wrap_pyfunction!(build_roivec_livebot, m)?)?;
     m.add_class::<BacktestAsset>()?;
     m.add_class::<LiveInstrument>()?;
@@ -657,6 +663,7 @@ impl LiveInstrument {
     }
 }
 
+#[cfg(feature = "live")]
 #[pyfunction]
 pub fn build_hashmap_livebot(instruments: Vec<PyRefMut<LiveInstrument>>) -> PyResult<usize> {
     let mut builder = LiveBotBuilder::new();
@@ -679,6 +686,7 @@ pub fn build_hashmap_livebot(instruments: Vec<PyRefMut<LiveInstrument>>) -> PyRe
     Ok(Box::into_raw(Box::new(hbt)) as *mut c_void as usize)
 }
 
+#[cfg(feature = "live")]
 #[pyfunction]
 pub fn build_roivec_livebot(instruments: Vec<PyRefMut<LiveInstrument>>) -> PyResult<usize> {
     let mut builder = LiveBotBuilder::new();
